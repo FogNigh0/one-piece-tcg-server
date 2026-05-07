@@ -21,11 +21,11 @@ import os
 # ── Configuración ─────────────────────────────────────────────────────────────
 
 DB_CONFIG = {
-    "host":     os.getenv("DB_HOST", "localhost"),
-    "port":     int(os.getenv("DB_PORT", "5432")),
-    "dbname":   os.getenv("DB_NAME", "op_tcg"),
-    "user":     os.getenv("DB_USER", "op_user"),
-    "password": os.getenv("DB_PASS", "op_password"),
+    "host":     os.getenv("DB_HOST", "nozomi.proxy.rlwy.net"),
+    "port":     int(os.getenv("DB_PORT", "33325")),
+    "dbname":   os.getenv("DB_NAME", "railway"),
+    "user":     os.getenv("DB_USER", "postgres"),
+    "password": os.getenv("DB_PASS", "apthEUgfIwXgLEazqMNGwNxMtDeTDEyf"),
 }
 
 API_BASE = "https://optcgapi.com/api"
@@ -34,7 +34,7 @@ API_BASE = "https://optcgapi.com/api"
 KNOWN_SETS = [
     "OP01", "OP02", "OP03", "OP04", "OP05", "OP06",
     "OP07", "OP08", "OP09", "OP10", "OP11", "OP12",
-    "OP13", "OP14",
+    "OP13", "OP14", "OP15",
     "ST01", "ST02", "ST03", "ST04", "ST05", "ST06",
     "ST07", "ST08", "ST09", "ST10", "ST11", "ST12",
     "ST13", "ST14", "ST15", "ST16", "ST17", "ST18",

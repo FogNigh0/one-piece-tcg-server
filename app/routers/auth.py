@@ -99,6 +99,7 @@ async def register(body: RegisterRequest):
             username=body.username.strip(),
             email=body.email.lower().strip(),
             password_hash=hash_password(body.password),
+            is_active=True,
         )
     )
     new_user = await database.fetch_one(
@@ -131,6 +132,17 @@ async def login(body: LoginRequest):
         raise HTTPException(401, "Credenciales incorrectas")
     if not user["is_active"]:
         raise HTTPException(403, "Cuenta desactivada")
+
+    return TokenResponse(
+        access_token=create_access_token(user["id"], user["username"]),
+        refresh_token=create_refresh_token(user["id"]),
+        user=UserPublic(
+            id=user["id"],
+            username=user["username"],
+            email=user["email"],
+            created_at=user["created_at"],
+        ),
+    )
 
     return TokenResponse(
         access_token=create_access_token(user["id"], user["username"]),

@@ -44,7 +44,7 @@ users = sqlalchemy.Table(
     sqlalchemy.Column("username",      sqlalchemy.String(50), unique=True, nullable=False, index=True),
     sqlalchemy.Column("email",         sqlalchemy.String(255), unique=True, nullable=False, index=True),
     sqlalchemy.Column("password_hash", sqlalchemy.String(255), nullable=False),
-    sqlalchemy.Column("is_active", sqlalchemy.Boolean, default=True, server_default=sqlalchemy.true()),
+    sqlalchemy.Column("is_active", sqlalchemy.Boolean, nullable=False, default=True, server_default="true"),
     sqlalchemy.Column("created_at",    sqlalchemy.DateTime, server_default=sqlalchemy.func.now()),
 )
 
