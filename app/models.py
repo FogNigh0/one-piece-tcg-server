@@ -35,3 +35,47 @@ decks = sqlalchemy.Table(
     sqlalchemy.Column("created_at", sqlalchemy.DateTime, server_default=sqlalchemy.func.now()),
     sqlalchemy.Column("updated_at", sqlalchemy.DateTime, server_default=sqlalchemy.func.now(), onupdate=sqlalchemy.func.now()),
 )
+
+# ── Usuarios ──────────────────────────────────────────────────────────────────
+users = sqlalchemy.Table(
+    "users",
+    metadata,
+    sqlalchemy.Column("id",            sqlalchemy.Integer, primary_key=True, autoincrement=True),
+    sqlalchemy.Column("username",      sqlalchemy.String(50), unique=True, nullable=False, index=True),
+    sqlalchemy.Column("email",         sqlalchemy.String(255), unique=True, nullable=False, index=True),
+    sqlalchemy.Column("password_hash", sqlalchemy.String(255), nullable=False),
+    sqlalchemy.Column("is_active", sqlalchemy.Boolean, default=True, server_default=sqlalchemy.true()),
+    sqlalchemy.Column("created_at",    sqlalchemy.DateTime, server_default=sqlalchemy.func.now()),
+)
+
+# ── Carpetas de usuario ───────────────────────────────────────────────────────
+user_folders = sqlalchemy.Table(
+    "user_folders",
+    metadata,
+    sqlalchemy.Column("id",          sqlalchemy.Integer, primary_key=True, autoincrement=True),
+    sqlalchemy.Column("user_id",     sqlalchemy.Integer, sqlalchemy.ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True),
+    sqlalchemy.Column("name",        sqlalchemy.String(120), nullable=False),
+    sqlalchemy.Column("is_public",   sqlalchemy.Boolean, default=False, server_default="0", nullable=False),
+    sqlalchemy.Column("share_token", sqlalchemy.String(36), unique=True, nullable=True, index=True),
+    sqlalchemy.Column("created_at",  sqlalchemy.DateTime, server_default=sqlalchemy.func.now()),
+)
+
+# ── Cartas dentro de carpetas de usuario ──────────────────────────────────────
+user_folder_cards = sqlalchemy.Table(
+    "user_folder_cards",
+    metadata,
+    sqlalchemy.Column("id",            sqlalchemy.Integer, primary_key=True, autoincrement=True),
+    sqlalchemy.Column("folder_id",     sqlalchemy.Integer, sqlalchemy.ForeignKey("user_folders.id", ondelete="CASCADE"), nullable=False, index=True),
+    sqlalchemy.Column("card_set_code", sqlalchemy.String(30), nullable=False),  # ej: OP14-091
+    sqlalchemy.Column("quantity",      sqlalchemy.Integer, default=1, nullable=False),
+)
+
+user_collection = sqlalchemy.Table(
+    "user_collection",
+    metadata,
+    sqlalchemy.Column("id",            sqlalchemy.Integer, primary_key=True, autoincrement=True),
+    sqlalchemy.Column("user_id",       sqlalchemy.Integer, sqlalchemy.ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True),
+    sqlalchemy.Column("card_set_code", sqlalchemy.String(50), nullable=False),
+    sqlalchemy.Column("quantity",      sqlalchemy.Integer, default=1, nullable=False),
+    sqlalchemy.Column("updated_at",    sqlalchemy.DateTime, server_default=sqlalchemy.func.now(), onupdate=sqlalchemy.func.now()),
+)
