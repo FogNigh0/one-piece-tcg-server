@@ -25,7 +25,13 @@ async def search_cards(
     query = cards.select()
 
     if q:
-        query = query.where(cards.c.name.ilike(f"%{q}%"))
+        q_clean = q.strip()
+        query = query.where(
+            sqlalchemy.or_(
+                cards.c.name.ilike(f"%{q_clean}%"),
+                cards.c.id.ilike(f"%{q_clean}%"),
+            )
+        )
     if set_code:
         query = query.where(cards.c.set_code == set_code.upper())
     if card_type:
