@@ -14,7 +14,7 @@ router = APIRouter(prefix="/admin", tags=["admin"])
 # ── Guard: solo admins ────────────────────────────────────────────────────────
 
 async def require_admin(current_user=Depends(get_current_user)):
-    if not current_user.get("is_admin", False):
+    if not current_user["is_admin"]:
         raise HTTPException(403, "Acceso denegado — solo administradores")
     return current_user
 
@@ -100,7 +100,7 @@ async def list_users(
             username=r["username"],
             email=r["email"],
             is_active=r["is_active"],
-            is_admin=r.get("is_admin", False),
+            is_admin=r["is_admin"],
             created_at=r["created_at"],
         )
         for r in rows
