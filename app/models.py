@@ -44,7 +44,8 @@ users = sqlalchemy.Table(
     sqlalchemy.Column("username",      sqlalchemy.String(50), unique=True, nullable=False, index=True),
     sqlalchemy.Column("email",         sqlalchemy.String(255), unique=True, nullable=False, index=True),
     sqlalchemy.Column("password_hash", sqlalchemy.String(255), nullable=False),
-    sqlalchemy.Column("is_active", sqlalchemy.Boolean, nullable=False, default=True, server_default="true"),
+    sqlalchemy.Column("is_active",     sqlalchemy.Boolean, nullable=False, default=True, server_default="true"),
+    sqlalchemy.Column("is_admin",      sqlalchemy.Boolean, nullable=False, default=False, server_default="false"),
     sqlalchemy.Column("created_at",    sqlalchemy.DateTime, server_default=sqlalchemy.func.now()),
 )
 
@@ -78,4 +79,16 @@ user_collection = sqlalchemy.Table(
     sqlalchemy.Column("card_set_code", sqlalchemy.String(50), nullable=False),
     sqlalchemy.Column("quantity",      sqlalchemy.Integer, default=1, nullable=False),
     sqlalchemy.Column("updated_at",    sqlalchemy.DateTime, server_default=sqlalchemy.func.now(), onupdate=sqlalchemy.func.now()),
+)
+
+# ── Feedback / Reportes de usuarios ──────────────────────────────────────────
+feedback = sqlalchemy.Table(
+    "feedback",
+    metadata,
+    sqlalchemy.Column("id",         sqlalchemy.Integer, primary_key=True, autoincrement=True),
+    sqlalchemy.Column("user_id",    sqlalchemy.Integer, sqlalchemy.ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True),
+    sqlalchemy.Column("type",       sqlalchemy.String(20), nullable=False, server_default="feedback"),  # feedback | bug | suggestion
+    sqlalchemy.Column("message",    sqlalchemy.Text, nullable=False),
+    sqlalchemy.Column("is_read",    sqlalchemy.Boolean, nullable=False, default=False, server_default="false"),
+    sqlalchemy.Column("created_at", sqlalchemy.DateTime, server_default=sqlalchemy.func.now()),
 )
