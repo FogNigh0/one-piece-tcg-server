@@ -192,6 +192,18 @@ tbody td { padding:12px 14px; font-size:13px; }
 }
 @keyframes spin { to { transform:rotate(360deg); } }
 .loading-row td { text-align:center; padding:32px; }
+
+/* ─── TOASTS ──────────────────────────────────────────────── */
+#toast-container { position:fixed; bottom:24px; right:24px; z-index:9999; display:flex; flex-direction:column-reverse; gap:8px; pointer-events:none; }
+.toast {
+  padding:11px 16px; border-radius:10px; font-size:13px; font-weight:600;
+  color:#fff; box-shadow:0 4px 20px rgba(0,0,0,.6); max-width:300px;
+  animation:toastIn .2s ease; pointer-events:none;
+}
+.toast.success { background:var(--green); }
+.toast.error   { background:var(--red);   }
+.toast.info    { background:var(--blue);  }
+@keyframes toastIn { from { opacity:0; transform:translateY(10px); } to { opacity:1; transform:none; } }
 </style>
 </head>
 <body>
@@ -246,7 +258,12 @@ tbody td { padding:12px 14px; font-size:13px; }
     <div id="tab-users" class="tab-panel">
       <div class="section-header">
         <div class="section-title">Usuarios registrados</div>
-        <input class="search-input" id="user-search" type="text" placeholder="🔍  Buscar usuario o email…" oninput="filterUsers()">
+        <div style="display:flex;gap:8px;align-items:center">
+          <button class="btn-sm" id="reload-users-btn"
+            style="background:var(--surf2);color:var(--muted);border:1px solid var(--border)"
+            onclick="loadUsers()">↻ Recargar</button>
+          <input class="search-input" id="user-search" type="text" placeholder="🔍  Buscar usuario o email…" oninput="filterUsers()">
+        </div>
       </div>
       <div class="table-wrap">
         <table>
@@ -286,6 +303,9 @@ tbody td { padding:12px 14px; font-size:13px; }
 
   </main>
 </div>
+
+<!-- Toast container -->
+<div id="toast-container"></div>
 
 <script>
 // ─── State ────────────────────────────────────────────────────────────────────
@@ -378,6 +398,9 @@ function switchTab(name, el) {
   document.querySelectorAll('.nav-tab').forEach(b => b.classList.remove('active'));
   document.getElementById('tab-' + name).classList.add('active');
   el.classList.add('active');
+  // Refresca datos al entrar a cada tab para que siempre estén actualizados
+  if (name === 'users')    loadUsers();
+  if (name === 'feedback') { fbPage_ = 1; loadFeedback(); }
 }
 
 // ─── Stats ────────────────────────────────────────────────────────────────────
@@ -400,18 +423,23 @@ async function loadStats() {
 
 // ─── Users ────────────────────────────────────────────────────────────────────
 async function loadUsers() {
+  const btn = document.getElementById('reload-users-btn');
+  if (btn) { btn.disabled = true; btn.textContent = '…'; }
   document.getElementById('users-tbody').innerHTML =
     '<tr class="loading-row"><td colspan="7"><span class="spinner"></span></td></tr>';
   try {
     const res = await fetch('/admin/users?limit=500', { headers: authHeader() });
     if (res.status === 401) { doLogout(); return; }
+    if (!res.ok) throw new Error('HTTP ' + res.status);
     usersData = await res.json();
     usersFiltered = [...usersData];
     usersPage_ = 1;
     renderUsers();
-  } catch {
+  } catch (e) {
     document.getElementById('users-tbody').innerHTML =
-      '<tr class="loading-row"><td colspan="7" style="color:var(--red)">Error al cargar usuarios.</td></tr>';
+      `<tr class="loading-row"><td colspan="7" style="color:var(--red)">Error al cargar usuarios: ${e.message}</td></tr>`;
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = '↻ Recargar'; }
   }
 }
 
@@ -479,45 +507,73 @@ function renderUsers() {
 }
 
 async function toggleUser(id, active, btn) {
-  btn.disabled = true;
+  // Deshabilitar toda la fila durante la operación
+  const row = document.getElementById('user-row-' + id);
+  const rowBtns = row ? row.querySelectorAll('button') : [btn];
+  rowBtns.forEach(b => b.disabled = true);
   try {
     const res = await fetch(`/admin/users/${id}`, {
       method: 'PATCH',
       headers: { ...authHeader(), 'Content-Type':'application/json' },
       body: JSON.stringify({ is_active: active })
     });
-    if (!res.ok) throw new Error();
+    if (res.status === 401) { doLogout(); return; }
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.detail || 'Error del servidor');
+    }
+    // Actualizar estado local
     const u = usersData.find(u => u.id === id);
     if (u) u.is_active = active;
-    const uf = usersFiltered.find(u => u.id === id);
-    if (uf) uf.is_active = active;
+    // usersFiltered comparte referencias con usersData — ya está actualizado
     renderUsers();
     loadStats();
-  } catch {
-    alert('Error al cambiar el estado del usuario.');
-    btn.disabled = false;
+    showToast(active ? '✓ Cuenta activada' : '✓ Cuenta desactivada');
+  } catch (e) {
+    showToast(e.message || 'Error al cambiar el estado.', 'error');
+    rowBtns.forEach(b => b.disabled = false);
   }
 }
 
 async function setPlan(id, isPremium, btn) {
-  btn.disabled = true;
+  const row = document.getElementById('user-row-' + id);
+  const rowBtns = row ? row.querySelectorAll('button') : [btn];
+  rowBtns.forEach(b => b.disabled = true);
   try {
     const res = await fetch(`/admin/users/${id}/plan`, {
       method: 'PATCH',
       headers: { ...authHeader(), 'Content-Type':'application/json' },
       body: JSON.stringify({ is_premium: isPremium })
     });
-    if (!res.ok) throw new Error();
+    if (res.status === 401) { doLogout(); return; }
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.detail || 'Error del servidor');
+    }
     const u = usersData.find(u => u.id === id);
     if (u) u.is_premium = isPremium;
-    const uf = usersFiltered.find(u => u.id === id);
-    if (uf) uf.is_premium = isPremium;
     renderUsers();
     loadStats();
-  } catch {
-    alert('Error al cambiar el plan del usuario.');
-    btn.disabled = false;
+    showToast(isPremium ? '⭐ Plan Premium activado' : '✓ Cambiado a plan Free');
+  } catch (e) {
+    showToast(e.message || 'Error al cambiar el plan.', 'error');
+    rowBtns.forEach(b => b.disabled = false);
   }
+}
+
+// ─── Toast notifications ──────────────────────────────────────────────────────
+function showToast(msg, type = 'success') {
+  const container = document.getElementById('toast-container');
+  const toast = document.createElement('div');
+  toast.className = `toast ${type}`;
+  toast.textContent = msg;
+  container.appendChild(toast);
+  // Auto-remove after 3 s
+  setTimeout(() => {
+    toast.style.transition = 'opacity .3s';
+    toast.style.opacity = '0';
+    setTimeout(() => toast.remove(), 320);
+  }, 3000);
 }
 
 // ─── Feedback ─────────────────────────────────────────────────────────────────
