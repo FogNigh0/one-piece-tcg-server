@@ -35,7 +35,7 @@ async def search_cards(
     if set_code:
         query = query.where(cards.c.set_code == set_code.upper())
     if card_type:
-        query = query.where(cards.c.card_type == card_type.upper())
+        query = query.where(sqlalchemy.func.upper(cards.c.card_type) == card_type.upper())
     if color:
         query = query.where(cards.c.color.ilike(f"%{color}%"))
 

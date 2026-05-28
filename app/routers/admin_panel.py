@@ -145,8 +145,12 @@ tbody td { padding:12px 14px; font-size:13px; }
 .btn-sm.deactivate:hover { background:var(--red); color:#fff; }
 .btn-sm.activate   { background:rgba(76,175,129,.15); color:var(--green); }
 .btn-sm.activate:hover   { background:var(--green); color:#fff; }
-.btn-sm.mark-read  { background:var(--surf2); color:var(--muted); border:1px solid var(--border); }
+.btn-sm.mark-read    { background:var(--surf2); color:var(--muted); border:1px solid var(--border); }
 .btn-sm.mark-read:hover  { border-color:var(--gold); color:var(--gold); }
+.btn-sm.mark-unread  { background:rgba(212,168,67,.12); color:var(--gold); border:1px solid rgba(212,168,67,.3); }
+.btn-sm.mark-unread:hover { background:var(--gold); color:#0D0D0D; }
+.btn-sm.delete       { background:rgba(233,69,96,.12); color:var(--red); border:1px solid rgba(233,69,96,.3); }
+.btn-sm.delete:hover { background:var(--red); color:#fff; }
 .btn-sm:disabled   { opacity:.4; cursor:not-allowed; }
 
 /* ─── PAGINATION ──────────────────────────────────────────── */
@@ -177,7 +181,7 @@ tbody td { padding:12px 14px; font-size:13px; }
 .fb-card .fb-user   { font-weight:700; font-size:13px; }
 .fb-card .fb-date   { font-size:11px; color:var(--muted); }
 .fb-card .fb-text   { font-size:13px; color:#ccc; line-height:1.5; }
-.fb-card .fb-action { flex-shrink:0; padding-top:2px; }
+.fb-card .fb-action { flex-shrink:0; padding-top:2px; display:flex; flex-direction:column; gap:5px; align-items:flex-end; }
 
 /* ─── EMPTY / LOADING ─────────────────────────────────────── */
 .empty { text-align:center; padding:48px 0; color:var(--muted); font-size:14px; }
@@ -565,15 +569,16 @@ function renderFeedback(items) {
           <span class="chip ${typeCls[fb.type] || 'type-feedback'}">${typeLabels[fb.type] || fb.type}</span>
           <span class="fb-user">${fb.username ? esc(fb.username) : '<em style="color:var(--muted)">anónimo</em>'}</span>
           <span class="fb-date">${fmtDateFull(fb.created_at)}</span>
-          ${!fb.is_read ? '<span style="font-size:11px;color:var(--gold);font-weight:700">● Nuevo</span>' : ''}
+          ${!fb.is_read ? '<span class="fb-new" style="font-size:11px;color:var(--gold);font-weight:700">● Nuevo</span>' : ''}
         </div>
         <div class="fb-text">${esc(fb.message)}</div>
       </div>
       <div class="fb-action">
         ${!fb.is_read
           ? `<button class="btn-sm mark-read" onclick="markRead(${fb.id},this)">Marcar leído</button>`
-          : '<span style="color:var(--muted);font-size:12px">✓ Leído</span>'
+          : `<button class="btn-sm mark-unread" onclick="markUnread(${fb.id},this)">Marcar no leído</button>`
         }
+        <button class="btn-sm delete" onclick="deleteFeedback(${fb.id},this)">Eliminar</button>
       </div>
     </div>
   `).join('');
@@ -589,13 +594,73 @@ async function markRead(id, btn) {
     const card = document.getElementById('fb-' + id);
     if (card) {
       card.classList.remove('unread');
+      // Quitar badge "● Nuevo"
+      card.querySelectorAll('.fb-header span').forEach(s => {
+        if (s.textContent.includes('Nuevo')) s.remove();
+      });
       const action = card.querySelector('.fb-action');
-      action.innerHTML = '<span style="color:var(--muted);font-size:12px">✓ Leído</span>';
+      action.innerHTML = `
+        <button class="btn-sm mark-unread" onclick="markUnread(${id},this)">Marcar no leído</button>
+        <button class="btn-sm delete" onclick="deleteFeedback(${id},this)">Eliminar</button>
+      `;
     }
     loadStats();
   } catch {
     btn.disabled = false;
     alert('Error al marcar como leído.');
+  }
+}
+
+async function markUnread(id, btn) {
+  btn.disabled = true;
+  try {
+    const res = await fetch(`/admin/feedback/${id}/unread`, {
+      method: 'PATCH', headers: authHeader()
+    });
+    if (!res.ok) throw new Error();
+    const card = document.getElementById('fb-' + id);
+    if (card) {
+      card.classList.add('unread');
+      // Añadir badge "● Nuevo" si no existe
+      const header = card.querySelector('.fb-header');
+      if (!header.querySelector('.fb-new')) {
+        const badge = document.createElement('span');
+        badge.className = 'fb-new';
+        badge.style.cssText = 'font-size:11px;color:var(--gold);font-weight:700';
+        badge.textContent = '● Nuevo';
+        header.appendChild(badge);
+      }
+      const action = card.querySelector('.fb-action');
+      action.innerHTML = `
+        <button class="btn-sm mark-read" onclick="markRead(${id},this)">Marcar leído</button>
+        <button class="btn-sm delete" onclick="deleteFeedback(${id},this)">Eliminar</button>
+      `;
+    }
+    loadStats();
+  } catch {
+    btn.disabled = false;
+    alert('Error al marcar como no leído.');
+  }
+}
+
+async function deleteFeedback(id, btn) {
+  if (!confirm('¿Eliminar este mensaje permanentemente? Esta acción no se puede deshacer.')) return;
+  btn.disabled = true;
+  try {
+    const res = await fetch(`/admin/feedback/${id}`, {
+      method: 'DELETE', headers: authHeader()
+    });
+    if (!res.ok) throw new Error();
+    const card = document.getElementById('fb-' + id);
+    if (card) {
+      card.style.opacity = '0';
+      card.style.transition = 'opacity .25s';
+      setTimeout(() => card.remove(), 260);
+    }
+    loadStats();
+  } catch {
+    btn.disabled = false;
+    alert('Error al eliminar el mensaje.');
   }
 }
 

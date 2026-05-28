@@ -205,3 +205,28 @@ async def mark_feedback_read(feedback_id: int, _=Depends(require_admin)):
         .values(is_read=True)
     )
     return {"id": feedback_id, "is_read": True}
+
+
+@router.patch("/feedback/{feedback_id}/unread")
+async def mark_feedback_unread(feedback_id: int, _=Depends(require_admin)):
+    """Marca un mensaje como no leído."""
+    await database.execute(
+        feedback_table.update()
+        .where(feedback_table.c.id == feedback_id)
+        .values(is_read=False)
+    )
+    return {"id": feedback_id, "is_read": False}
+
+
+@router.delete("/feedback/{feedback_id}")
+async def delete_feedback(feedback_id: int, _=Depends(require_admin)):
+    """Elimina un mensaje de feedback permanentemente."""
+    row = await database.fetch_one(
+        feedback_table.select().where(feedback_table.c.id == feedback_id)
+    )
+    if not row:
+        raise HTTPException(404, "Mensaje no encontrado")
+    await database.execute(
+        feedback_table.delete().where(feedback_table.c.id == feedback_id)
+    )
+    return {"id": feedback_id, "deleted": True}
