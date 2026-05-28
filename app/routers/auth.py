@@ -1,4 +1,5 @@
 import re
+import logging
 import smtplib
 import asyncio
 from email.mime.multipart import MIMEMultipart
@@ -20,6 +21,7 @@ from ..core.security import (
 )
 from jose import jwt, JWTError
 
+logger = logging.getLogger("uvicorn.error")
 router = APIRouter(prefix="/auth", tags=["auth"])
 _bearer = HTTPBearer()
 
@@ -151,44 +153,68 @@ def _create_reset_token(user_id: int) -> str:
 
 @router.post("/register", response_model=TokenResponse, status_code=201)
 async def register(body: RegisterRequest):
-    existing_email = await database.fetch_one(
-        users.select().where(users.c.email == body.email.lower().strip())
-    )
-    if existing_email:
-        raise HTTPException(400, "El email ya está registrado")
-
-    # Comparación case-insensitive para username
-    existing_user = await database.fetch_one(
-        users.select().where(
-            func.lower(users.c.username) == body.username.strip().lower()
+    try:
+        # 1. Unicidad de email
+        existing_email = await database.fetch_one(
+            users.select().where(users.c.email == body.email.lower().strip())
         )
-    )
-    if existing_user:
-        raise HTTPException(400, "El nombre de usuario ya está en uso")
+        if existing_email:
+            raise HTTPException(400, "El email ya está registrado")
 
-    user_id = await database.execute(
-        users.insert().values(
-            username=body.username.strip(),
-            email=body.email.lower().strip(),
-            password_hash=hash_password(body.password),
-            is_active=True,
-            is_admin=False,
+        # 2. Unicidad de username (case-insensitive)
+        existing_user = await database.fetch_one(
+            users.select().where(
+                func.lower(users.c.username) == body.username.strip().lower()
+            )
         )
-    )
-    new_user = await database.fetch_one(
-        users.select().where(users.c.id == user_id)
-    )
-    return TokenResponse(
-        access_token=create_access_token(new_user["id"], new_user["username"]),
-        refresh_token=create_refresh_token(new_user["id"]),
-        user=UserPublic(
-            id=new_user["id"],
-            username=new_user["username"],
-            email=new_user["email"],
-            is_premium=new_user["is_premium"],
-            created_at=new_user["created_at"],
-        ),
-    )
+        if existing_user:
+            raise HTTPException(400, "El nombre de usuario ya está en uso")
+
+        # 3. Insertar usuario — is_premium se especifica explícitamente para evitar
+        #    problemas si la columna fue agregada por migración sin DEFAULT en el DB real
+        user_id = await database.execute(
+            users.insert().values(
+                username=body.username.strip(),
+                email=body.email.lower().strip(),
+                password_hash=hash_password(body.password),
+                is_active=True,
+                is_admin=False,
+                is_premium=False,
+            )
+        )
+        logger.info(f"New user registered — id={user_id}, username={body.username.strip()}")
+
+        # 4. Recuperar el usuario recién creado
+        new_user = await database.fetch_one(
+            users.select().where(users.c.id == user_id)
+        )
+        if new_user is None:
+            logger.error(f"User inserted but not found — user_id={user_id}")
+            raise HTTPException(500, "Error al crear la cuenta. Intenta de nuevo.")
+
+        # 5. Leer is_premium con fallback por si la columna falta en el DB
+        try:
+            is_premium = bool(new_user["is_premium"])
+        except (KeyError, TypeError):
+            is_premium = False
+
+        return TokenResponse(
+            access_token=create_access_token(new_user["id"], new_user["username"]),
+            refresh_token=create_refresh_token(new_user["id"]),
+            user=UserPublic(
+                id=new_user["id"],
+                username=new_user["username"],
+                email=new_user["email"],
+                is_premium=is_premium,
+                created_at=new_user["created_at"],
+            ),
+        )
+
+    except HTTPException:
+        raise  # reenviar errores HTTP conocidos tal cual
+    except Exception as exc:
+        logger.error(f"Register error for '{body.username}': {exc}", exc_info=True)
+        raise HTTPException(500, f"Error al registrar la cuenta: {str(exc)}")
 
 
 @router.post("/login", response_model=TokenResponse)
