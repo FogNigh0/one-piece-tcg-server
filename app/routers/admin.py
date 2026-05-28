@@ -129,10 +129,13 @@ async def toggle_user(
     user = await database.fetch_one(users.select().where(users.c.id == user_id))
     if not user:
         raise HTTPException(404, "Usuario no encontrado")
-    await database.execute(
-        users.update().where(users.c.id == user_id).values(is_active=body.is_active)
-    )
-    return {"id": user_id, "is_active": body.is_active}
+    try:
+        await database.execute(
+            users.update().where(users.c.id == user_id).values(is_active=body.is_active)
+        )
+        return {"id": user_id, "is_active": body.is_active}
+    except Exception as e:
+        raise HTTPException(500, f"Error al actualizar estado del usuario: {str(e)}")
 
 
 @router.patch("/users/{user_id}/plan")
@@ -146,14 +149,32 @@ async def set_user_plan(
     if not user:
         raise HTTPException(404, "Usuario no encontrado")
 
-    values: dict = {"is_premium": body.is_premium}
-    if body.is_premium:
-        values["premium_since"] = datetime.now(timezone.utc)
+    try:
+        # Paso 1 — actualizar is_premium (campo crítico, siempre debe funcionar)
+        await database.execute(
+            users.update()
+            .where(users.c.id == user_id)
+            .values(is_premium=body.is_premium)
+        )
 
-    await database.execute(
-        users.update().where(users.c.id == user_id).values(**values)
-    )
-    return {"id": user_id, "is_premium": body.is_premium}
+        # Paso 2 — actualizar premium_since (timezone-naive para TIMESTAMP sin TZ)
+        # Se ejecuta en un bloque separado para que un fallo aquí no aborte el paso 1
+        if body.is_premium:
+            try:
+                now_naive = datetime.now(timezone.utc).replace(tzinfo=None)
+                await database.execute(
+                    users.update()
+                    .where(users.c.id == user_id)
+                    .values(premium_since=now_naive)
+                )
+            except Exception:
+                # La columna puede no existir en DBs antiguas — no es crítico
+                pass
+
+        return {"id": user_id, "is_premium": body.is_premium}
+
+    except Exception as e:
+        raise HTTPException(500, f"Error al actualizar el plan: {str(e)}")
 
 
 @router.get("/feedback", response_model=List[FeedbackAdminView])

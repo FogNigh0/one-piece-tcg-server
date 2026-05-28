@@ -544,14 +544,19 @@ async function setPlan(id, isPremium, btn) {
     if (res.status === 401) { doLogout(); return; }
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
-      throw new Error(err.detail || 'Error del servidor');
+      const msg = err.detail || `HTTP ${res.status}`;
+      console.error('[setPlan] Error:', msg, err);
+      throw new Error(msg);
     }
     const u = usersData.find(u => u.id === id);
     if (u) u.is_premium = isPremium;
+    const uf = usersFiltered.find(u => u.id === id);
+    if (uf) uf.is_premium = isPremium;
     renderUsers();
     loadStats();
     showToast(isPremium ? '⭐ Plan Premium activado' : '✓ Cambiado a plan Free');
   } catch (e) {
+    console.error('[setPlan] Caught:', e);
     showToast(e.message || 'Error al cambiar el plan.', 'error');
     rowBtns.forEach(b => b.disabled = false);
   }
