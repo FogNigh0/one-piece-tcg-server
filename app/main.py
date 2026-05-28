@@ -26,9 +26,12 @@ app.include_router(admin_panel.router)
 
 
 async def _run_migrations():
-    """Agrega columnas nuevas a tablas existentes (idempotente)."""
+    """Agrega columnas nuevas a tablas existentes (idempotente — usa IF NOT EXISTS)."""
     migrations = [
-        "ALTER TABLE users ADD COLUMN IF NOT EXISTS is_admin BOOLEAN NOT NULL DEFAULT false",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS is_admin    BOOLEAN   NOT NULL DEFAULT false",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS is_premium  BOOLEAN   NOT NULL DEFAULT false",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS premium_since TIMESTAMP          DEFAULT NULL",
+        "ALTER TABLE user_folders ADD COLUMN IF NOT EXISTS folder_type VARCHAR(20) NOT NULL DEFAULT 'collection'",
     ]
     for sql in migrations:
         try:

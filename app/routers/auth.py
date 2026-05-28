@@ -88,6 +88,7 @@ class UserPublic(BaseModel):
     id: int
     username: str
     email: str
+    is_premium: bool = False
     created_at: datetime
 
 
@@ -184,6 +185,7 @@ async def register(body: RegisterRequest):
             id=new_user["id"],
             username=new_user["username"],
             email=new_user["email"],
+            is_premium=new_user["is_premium"],
             created_at=new_user["created_at"],
         ),
     )
@@ -214,6 +216,7 @@ async def login(body: LoginRequest):
             id=user["id"],
             username=user["username"],
             email=user["email"],
+            is_premium=user["is_premium"],
             created_at=user["created_at"],
         ),
     )
@@ -237,6 +240,7 @@ async def refresh(body: RefreshRequest):
             id=user["id"],
             username=user["username"],
             email=user["email"],
+            is_premium=user["is_premium"],
             created_at=user["created_at"],
         ),
     )
@@ -248,6 +252,7 @@ async def me(current_user=Depends(get_current_user)):
         id=current_user["id"],
         username=current_user["username"],
         email=current_user["email"],
+        is_premium=current_user["is_premium"],
         created_at=current_user["created_at"],
     )
 

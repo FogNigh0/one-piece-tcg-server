@@ -230,6 +230,7 @@ tbody td { padding:12px 14px; font-size:13px; }
       <div class="stats-grid" id="stats-grid">
         <div class="stat-card"><div class="icon">👤</div><div class="val" id="s-total">—</div><div class="lbl">Total usuarios</div></div>
         <div class="stat-card green"><div class="icon">✅</div><div class="val" id="s-active">—</div><div class="lbl">Usuarios activos</div></div>
+        <div class="stat-card" style="border-color:rgba(212,168,67,.3)"><div class="icon">⭐</div><div class="val" id="s-premium" style="color:var(--gold)">—</div><div class="lbl">Usuarios Premium</div></div>
         <div class="stat-card"><div class="icon">🃏</div><div class="val" id="s-cards">—</div><div class="lbl">Cartas registradas</div></div>
         <div class="stat-card red"><div class="icon">💬</div><div class="val" id="s-unread">—</div><div class="lbl">Mensajes sin leer</div></div>
         <div class="stat-card"><div class="icon">📨</div><div class="val" id="s-total-fb">—</div><div class="lbl">Total mensajes</div></div>
@@ -247,11 +248,11 @@ tbody td { padding:12px 14px; font-size:13px; }
         <table>
           <thead>
             <tr>
-              <th>#</th><th>Usuario</th><th>Email</th><th>Registrado</th><th>Estado</th><th>Acción</th>
+              <th>#</th><th>Usuario</th><th>Email</th><th>Registrado</th><th>Estado</th><th>Plan</th><th>Acciones</th>
             </tr>
           </thead>
           <tbody id="users-tbody">
-            <tr class="loading-row"><td colspan="6"><span class="spinner"></span></td></tr>
+            <tr class="loading-row"><td colspan="7"><span class="spinner"></span></td></tr>
           </tbody>
         </table>
       </div>
@@ -383,6 +384,7 @@ async function loadStats() {
     const d = await res.json();
     document.getElementById('s-total').textContent    = d.total_users.toLocaleString();
     document.getElementById('s-active').textContent   = d.active_users.toLocaleString();
+    document.getElementById('s-premium').textContent  = d.premium_users.toLocaleString();
     document.getElementById('s-cards').textContent    = d.total_cards_registered.toLocaleString();
     document.getElementById('s-unread').textContent   = d.unread_feedback.toLocaleString();
     document.getElementById('s-total-fb').textContent = d.total_feedback.toLocaleString();
@@ -395,7 +397,7 @@ async function loadStats() {
 // ─── Users ────────────────────────────────────────────────────────────────────
 async function loadUsers() {
   document.getElementById('users-tbody').innerHTML =
-    '<tr class="loading-row"><td colspan="6"><span class="spinner"></span></td></tr>';
+    '<tr class="loading-row"><td colspan="7"><span class="spinner"></span></td></tr>';
   try {
     const res = await fetch('/admin/users?limit=500', { headers: authHeader() });
     if (res.status === 401) { doLogout(); return; }
@@ -405,7 +407,7 @@ async function loadUsers() {
     renderUsers();
   } catch {
     document.getElementById('users-tbody').innerHTML =
-      '<tr class="loading-row"><td colspan="6" style="color:var(--red)">Error al cargar usuarios.</td></tr>';
+      '<tr class="loading-row"><td colspan="7" style="color:var(--red)">Error al cargar usuarios.</td></tr>';
   }
 }
 
@@ -436,7 +438,7 @@ function renderUsers() {
   document.getElementById('u-next').disabled = usersPage_ >= maxPage;
 
   if (!slice.length) {
-    tbody.innerHTML = '<tr class="loading-row"><td colspan="6" class="empty">No hay usuarios.</td></tr>';
+    tbody.innerHTML = '<tr class="loading-row"><td colspan="7" class="empty">No hay usuarios.</td></tr>';
     return;
   }
 
@@ -451,11 +453,22 @@ function renderUsers() {
       <td style="color:var(--muted)">${fmtDate(u.created_at)}</td>
       <td><span class="chip ${u.is_active ? 'active' : 'inactive'}">${u.is_active ? 'Activo' : 'Inactivo'}</span></td>
       <td>
-        ${u.is_admin ? '<span style="color:var(--muted);font-size:12px">—</span>' :
-          u.is_active
+        ${u.is_premium
+          ? `<span class="chip" style="background:rgba(212,168,67,.15);color:var(--gold);border:1px solid rgba(212,168,67,.35)">⭐ Premium</span>`
+          : `<span class="chip" style="background:var(--surf2);color:var(--muted);border:1px solid var(--border)">Free</span>`
+        }
+      </td>
+      <td style="display:flex;gap:6px;flex-wrap:wrap">
+        ${u.is_admin ? '<span style="color:var(--muted);font-size:12px">—</span>' : `
+          ${u.is_active
             ? `<button class="btn-sm deactivate" onclick="toggleUser(${u.id},false,this)">Desactivar</button>`
             : `<button class="btn-sm activate"   onclick="toggleUser(${u.id},true,this)">Activar</button>`
-        }
+          }
+          ${u.is_premium
+            ? `<button class="btn-sm" style="background:rgba(212,168,67,.12);color:var(--gold)" onclick="setPlan(${u.id},false,this)">→ Free</button>`
+            : `<button class="btn-sm" style="background:rgba(212,168,67,.12);color:var(--gold)" onclick="setPlan(${u.id},true,this)">→ Premium</button>`
+          }
+        `}
       </td>
     </tr>
   `).join('');
@@ -470,7 +483,6 @@ async function toggleUser(id, active, btn) {
       body: JSON.stringify({ is_active: active })
     });
     if (!res.ok) throw new Error();
-    // Actualiza el dato local y re-renderiza
     const u = usersData.find(u => u.id === id);
     if (u) u.is_active = active;
     const uf = usersFiltered.find(u => u.id === id);
@@ -479,6 +491,27 @@ async function toggleUser(id, active, btn) {
     loadStats();
   } catch {
     alert('Error al cambiar el estado del usuario.');
+    btn.disabled = false;
+  }
+}
+
+async function setPlan(id, isPremium, btn) {
+  btn.disabled = true;
+  try {
+    const res = await fetch(`/admin/users/${id}/plan`, {
+      method: 'PATCH',
+      headers: { ...authHeader(), 'Content-Type':'application/json' },
+      body: JSON.stringify({ is_premium: isPremium })
+    });
+    if (!res.ok) throw new Error();
+    const u = usersData.find(u => u.id === id);
+    if (u) u.is_premium = isPremium;
+    const uf = usersFiltered.find(u => u.id === id);
+    if (uf) uf.is_premium = isPremium;
+    renderUsers();
+    loadStats();
+  } catch {
+    alert('Error al cambiar el plan del usuario.');
     btn.disabled = false;
   }
 }

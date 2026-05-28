@@ -1,7 +1,7 @@
 from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel
 from typing import List, Optional
-from datetime import datetime
+from datetime import datetime, timezone
 from sqlalchemy import func, select
 
 from ..database import database
@@ -24,6 +24,7 @@ async def require_admin(current_user=Depends(get_current_user)):
 class StatsResponse(BaseModel):
     total_users: int
     active_users: int
+    premium_users: int
     total_cards_registered: int
     total_feedback: int
     unread_feedback: int
@@ -35,6 +36,7 @@ class UserAdminView(BaseModel):
     email: str
     is_active: bool
     is_admin: bool
+    is_premium: bool
     created_at: datetime
 
 
@@ -52,6 +54,10 @@ class ToggleUserRequest(BaseModel):
     is_active: bool
 
 
+class SetPlanRequest(BaseModel):
+    is_premium: bool
+
+
 # ── Endpoints ─────────────────────────────────────────────────────────────────
 
 @router.get("/stats", response_model=StatsResponse)
@@ -61,6 +67,9 @@ async def get_stats(_=Depends(require_admin)):
     )
     active_users = await database.fetch_val(
         select(func.count()).select_from(users).where(users.c.is_active == True)
+    )
+    premium_users = await database.fetch_val(
+        select(func.count()).select_from(users).where(users.c.is_premium == True)
     )
     total_cards = await database.fetch_val(
         select(func.sum(user_collection.c.quantity)).select_from(user_collection)
@@ -75,6 +84,7 @@ async def get_stats(_=Depends(require_admin)):
     return StatsResponse(
         total_users=total_users or 0,
         active_users=active_users or 0,
+        premium_users=premium_users or 0,
         total_cards_registered=total_cards or 0,
         total_feedback=total_fb or 0,
         unread_feedback=unread_fb or 0,
@@ -101,6 +111,7 @@ async def list_users(
             email=r["email"],
             is_active=r["is_active"],
             is_admin=r["is_admin"],
+            is_premium=r["is_premium"],
             created_at=r["created_at"],
         )
         for r in rows
@@ -122,6 +133,27 @@ async def toggle_user(
         users.update().where(users.c.id == user_id).values(is_active=body.is_active)
     )
     return {"id": user_id, "is_active": body.is_active}
+
+
+@router.patch("/users/{user_id}/plan")
+async def set_user_plan(
+    user_id: int,
+    body: SetPlanRequest,
+    current_admin=Depends(require_admin),
+):
+    """Cambia el plan (Free / Premium) de un usuario."""
+    user = await database.fetch_one(users.select().where(users.c.id == user_id))
+    if not user:
+        raise HTTPException(404, "Usuario no encontrado")
+
+    values: dict = {"is_premium": body.is_premium}
+    if body.is_premium:
+        values["premium_since"] = datetime.now(timezone.utc)
+
+    await database.execute(
+        users.update().where(users.c.id == user_id).values(**values)
+    )
+    return {"id": user_id, "is_premium": body.is_premium}
 
 
 @router.get("/feedback", response_model=List[FeedbackAdminView])

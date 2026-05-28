@@ -46,6 +46,8 @@ users = sqlalchemy.Table(
     sqlalchemy.Column("password_hash", sqlalchemy.String(255), nullable=False),
     sqlalchemy.Column("is_active",     sqlalchemy.Boolean, nullable=False, default=True, server_default="true"),
     sqlalchemy.Column("is_admin",      sqlalchemy.Boolean, nullable=False, default=False, server_default="false"),
+    sqlalchemy.Column("is_premium",    sqlalchemy.Boolean, nullable=False, default=False, server_default="false"),
+    sqlalchemy.Column("premium_since", sqlalchemy.DateTime, nullable=True),   # para futura expiración
     sqlalchemy.Column("created_at",    sqlalchemy.DateTime, server_default=sqlalchemy.func.now()),
 )
 
@@ -58,6 +60,7 @@ user_folders = sqlalchemy.Table(
     sqlalchemy.Column("name",        sqlalchemy.String(120), nullable=False),
     sqlalchemy.Column("is_public",   sqlalchemy.Boolean, default=False, server_default="0", nullable=False),
     sqlalchemy.Column("share_token", sqlalchemy.String(36), unique=True, nullable=True, index=True),
+    sqlalchemy.Column("folder_type", sqlalchemy.String(20), nullable=False, server_default="collection"),  # collection | deck | trade
     sqlalchemy.Column("created_at",  sqlalchemy.DateTime, server_default=sqlalchemy.func.now()),
 )
 

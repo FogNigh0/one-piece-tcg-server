@@ -3,22 +3,28 @@ from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel
 from typing import Optional, List
 from datetime import datetime
+from sqlalchemy import func, select
 
 from ..database import database
-from ..models import user_folders, user_folder_cards
+from ..models import user_folders, user_folder_cards, users, cards as cards_table
 from .auth import get_current_user
+from ..core.limits import max_folders, max_cards_for_folder, DECK_MAX_CARDS
 
 router = APIRouter(prefix="/folders", tags=["folders"])
+
+VALID_TYPES = {"collection", "deck", "trade"}
 
 
 # ── Schemas ───────────────────────────────────────────────────────────────────
 
 class FolderCreate(BaseModel):
     name: str
+    folder_type: str = "collection"
 
 class FolderUpdate(BaseModel):
     name: Optional[str] = None
     is_public: Optional[bool] = None
+    folder_type: Optional[str] = None
 
 class FolderResponse(BaseModel):
     id: int
@@ -26,6 +32,7 @@ class FolderResponse(BaseModel):
     user_id: int
     is_public: bool
     share_token: Optional[str]
+    folder_type: str
     created_at: datetime
 
 class FolderCardItem(BaseModel):
@@ -39,6 +46,7 @@ class PublicFolderView(BaseModel):
     id: int
     name: str
     owner_username: str
+    folder_type: str
     cards: List[FolderCardItem]
     total_cards: int
 
@@ -52,22 +60,42 @@ async def list_my_folders(current_user=Depends(get_current_user)):
         .where(user_folders.c.user_id == current_user["id"])
         .order_by(user_folders.c.created_at.desc())
     )
-    return [dict(r) for r in rows]
+    return [_folder_dict(r) for r in rows]
 
 
 @router.post("", response_model=FolderResponse, status_code=201)
 async def create_folder(body: FolderCreate, current_user=Depends(get_current_user)):
+    # Normaliza tipo
+    folder_type = body.folder_type.lower() if body.folder_type else "collection"
+    if folder_type not in VALID_TYPES:
+        folder_type = "collection"
+
+    # Límite de carpetas según plan
+    is_premium: bool = current_user["is_premium"]
+    limit = max_folders(is_premium)
+    if limit != -1:
+        count = await database.fetch_val(
+            select(func.count()).select_from(user_folders)
+            .where(user_folders.c.user_id == current_user["id"])
+        )
+        if (count or 0) >= limit:
+            raise HTTPException(
+                403,
+                f"Plan gratuito: máximo {limit} carpetas. Actualiza a Premium para carpetas ilimitadas.",
+            )
+
     folder_id = await database.execute(
         user_folders.insert().values(
             name=body.name.strip(),
             user_id=current_user["id"],
             is_public=False,
+            folder_type=folder_type,
         )
     )
     folder = await database.fetch_one(
         user_folders.select().where(user_folders.c.id == folder_id)
     )
-    return dict(folder)
+    return _folder_dict(folder)
 
 
 @router.patch("/{folder_id}", response_model=FolderResponse)
@@ -89,6 +117,18 @@ async def update_folder(
         elif not body.is_public:
             values["share_token"] = None
 
+    if body.folder_type is not None:
+        new_type = body.folder_type.lower()
+        if new_type in VALID_TYPES:
+            # Solo permite cambiar tipo si la carpeta está vacía
+            card_count = await database.fetch_val(
+                select(func.count()).select_from(user_folder_cards)
+                .where(user_folder_cards.c.folder_id == folder_id)
+            )
+            if (card_count or 0) > 0 and new_type != folder["folder_type"]:
+                raise HTTPException(400, "No se puede cambiar el tipo de carpeta si tiene cartas.")
+            values["folder_type"] = new_type
+
     if values:
         await database.execute(
             user_folders.update()
@@ -99,7 +139,7 @@ async def update_folder(
     updated = await database.fetch_one(
         user_folders.select().where(user_folders.c.id == folder_id)
     )
-    return dict(updated)
+    return _folder_dict(updated)
 
 
 @router.delete("/{folder_id}", status_code=204)
@@ -128,7 +168,39 @@ async def sync_folder_cards(
     body: FolderCardsSync,
     current_user=Depends(get_current_user),
 ):
-    await _get_own_folder(folder_id, current_user["id"])
+    folder = await _get_own_folder(folder_id, current_user["id"])
+    is_premium: bool = current_user["is_premium"]
+    folder_type: str = folder["folder_type"] or "collection"
+
+    # Límite de cartas por carpeta
+    limit = max_cards_for_folder(is_premium, folder_type)
+    total = sum(item.quantity for item in body.cards)
+    if limit != -1 and total > limit:
+        raise HTTPException(
+            403,
+            f"Límite de {limit} cartas para carpeta tipo '{folder_type}' alcanzado.",
+        )
+
+    # Validación específica de mazo
+    if folder_type == "deck":
+        # Debe tener exactamente 1 carta líder
+        set_codes = [item.card_set_code for item in body.cards]
+        leader_rows = await database.fetch_all(
+            cards_table.select().where(
+                cards_table.c.id.in_(set_codes) &
+                (cards_table.c.card_type == "LEADER")
+            )
+        )
+        leader_count = sum(
+            next((item.quantity for item in body.cards if item.card_set_code == r["id"]), 0)
+            for r in leader_rows
+        )
+        if len(leader_rows) == 0:
+            raise HTTPException(400, "Un mazo debe tener exactamente 1 carta Líder.")
+        if len(leader_rows) > 1:
+            raise HTTPException(400, f"Un mazo solo puede tener 1 carta Líder (se encontraron {len(leader_rows)}).")
+        if leader_count != 1:
+            raise HTTPException(400, f"La carta Líder debe tener cantidad 1 (cantidad actual: {leader_count}).")
 
     await database.execute(
         user_folder_cards.delete()
@@ -175,12 +247,13 @@ async def view_public_folder(share_token: str):
         id=folder["id"],
         name=folder["name"],
         owner_username=owner["username"] if owner else "desconocido",
+        folder_type=folder["folder_type"] or "collection",
         cards=cards,
         total_cards=sum(c.quantity for c in cards),
     )
 
 
-# ── Helper ────────────────────────────────────────────────────────────────────
+# ── Helpers ───────────────────────────────────────────────────────────────────
 
 async def _get_own_folder(folder_id: int, user_id: int):
     folder = await database.fetch_one(
@@ -192,3 +265,9 @@ async def _get_own_folder(folder_id: int, user_id: int):
     if not folder:
         raise HTTPException(404, "Carpeta no encontrada")
     return folder
+
+
+def _folder_dict(row) -> dict:
+    d = dict(row)
+    d.setdefault("folder_type", "collection")
+    return d
