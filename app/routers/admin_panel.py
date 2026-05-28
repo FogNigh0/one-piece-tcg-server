@@ -1,11 +1,7 @@
-from pathlib import Path
 from fastapi import APIRouter
-from fastapi.responses import FileResponse, HTMLResponse
+from fastapi.responses import HTMLResponse
 
 router = APIRouter(tags=["admin-panel"])
-
-# one_piece_card_server/admin/index.html  (3 levels up from this file → server root)
-_ADMIN_HTML = Path(__file__).parent.parent.parent / "admin" / "index.html"
 
 _HTML_FALLBACK = """<!DOCTYPE html>
 <html lang="es">
@@ -752,6 +748,4 @@ function fmtDateFull(iso) {
 
 @router.get("/admin", include_in_schema=False)
 async def admin_panel():
-    if _ADMIN_HTML.exists():
-        return FileResponse(_ADMIN_HTML, media_type="text/html")
     return HTMLResponse(_HTML_FALLBACK)
