@@ -36,6 +36,9 @@ async def _run_migrations():
         # TIMESTAMP WITHOUT TIME ZONE — acepta valores timezone-naive de Python
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS premium_since TIMESTAMP WITHOUT TIME ZONE DEFAULT NULL",
         "ALTER TABLE user_folders ADD COLUMN IF NOT EXISTS folder_type VARCHAR(20) NOT NULL DEFAULT 'collection'",
+        # Perfil de usuario — bio y avatar
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS bio    VARCHAR(150) DEFAULT ''",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar VARCHAR(20)  DEFAULT ''",
     ]
     for sql in migrations:
         try:

@@ -9,6 +9,7 @@ from datetime import datetime, timedelta, timezone
 from fastapi import APIRouter, HTTPException, Depends
 from fastapi.responses import HTMLResponse
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from typing import Optional
 from pydantic import BaseModel, EmailStr, field_validator
 from sqlalchemy import func
 
@@ -92,6 +93,8 @@ class UserPublic(BaseModel):
     email: str
     is_premium: bool = False
     created_at: datetime
+    bio: str = ''
+    avatar: str = ''
 
 
 class TokenResponse(BaseModel):
@@ -99,6 +102,61 @@ class TokenResponse(BaseModel):
     refresh_token: str
     token_type: str = "bearer"
     user: UserPublic
+
+
+class UpdateProfileRequest(BaseModel):
+    username: Optional[str] = None
+    email: Optional[EmailStr] = None
+    bio: Optional[str] = None
+    avatar: Optional[str] = None
+    current_password: Optional[str] = None
+    new_password: Optional[str] = None
+
+    @field_validator("username")
+    @classmethod
+    def username_valid(cls, v):
+        if v is None:
+            return v
+        v = v.strip()
+        if len(v) < 3:
+            raise ValueError("Mínimo 3 caracteres")
+        if len(v) > 20:
+            raise ValueError("Máximo 20 caracteres")
+        if not re.match(r'^[a-zA-Z0-9_]+$', v):
+            raise ValueError("Solo letras, números y guión bajo (_)")
+        return v
+
+    @field_validator("bio")
+    @classmethod
+    def bio_valid(cls, v):
+        if v is None:
+            return v
+        v = v.strip()
+        if len(v) > 150:
+            raise ValueError("Máximo 150 caracteres")
+        return v
+
+    @field_validator("avatar")
+    @classmethod
+    def avatar_valid(cls, v):
+        if v is None:
+            return v
+        if len(v) > 10:
+            raise ValueError("Avatar inválido")
+        return v
+
+    @field_validator("new_password")
+    @classmethod
+    def new_password_valid(cls, v):
+        if v is None:
+            return v
+        if len(v) < 8:
+            raise ValueError("Mínimo 8 caracteres")
+        if not re.search(r'[0-9]', v):
+            raise ValueError("Debe contener al menos un número")
+        if not re.search(r'[!@#$%^&*(),.?":{}|<>_\-+=\[\]\\\/~`]', v):
+            raise ValueError("Debe contener al menos un carácter especial")
+        return v
 
 
 # ── get_current_user ──────────────────────────────────────────────────────────
@@ -146,6 +204,29 @@ def _create_reset_token(user_id: int) -> str:
         {"sub": str(user_id), "type": "reset", "exp": expire},
         settings.SECRET_KEY,
         algorithm="HS256",
+    )
+
+
+# ── Helpers ───────────────────────────────────────────────────────────────────
+
+def _safe(row, key: str, default='') -> str:
+    """Lee un campo opcional del row con fallback seguro."""
+    try:
+        return row[key] or default
+    except (KeyError, TypeError):
+        return default
+
+
+def _to_user_public(row) -> UserPublic:
+    """Construye UserPublic desde un registro de DB incluyendo campos opcionales."""
+    return UserPublic(
+        id=row["id"],
+        username=row["username"],
+        email=row["email"],
+        is_premium=bool(row["is_premium"]) if row["is_premium"] is not None else False,
+        created_at=row["created_at"],
+        bio=_safe(row, "bio"),
+        avatar=_safe(row, "avatar"),
     )
 
 
@@ -201,13 +282,7 @@ async def register(body: RegisterRequest):
         return TokenResponse(
             access_token=create_access_token(new_user["id"], new_user["username"]),
             refresh_token=create_refresh_token(new_user["id"]),
-            user=UserPublic(
-                id=new_user["id"],
-                username=new_user["username"],
-                email=new_user["email"],
-                is_premium=is_premium,
-                created_at=new_user["created_at"],
-            ),
+            user=_to_user_public(new_user),
         )
 
     except HTTPException:
@@ -238,13 +313,7 @@ async def login(body: LoginRequest):
     return TokenResponse(
         access_token=create_access_token(user["id"], user["username"]),
         refresh_token=create_refresh_token(user["id"]),
-        user=UserPublic(
-            id=user["id"],
-            username=user["username"],
-            email=user["email"],
-            is_premium=user["is_premium"],
-            created_at=user["created_at"],
-        ),
+        user=_to_user_public(user),
     )
 
 
@@ -262,25 +331,86 @@ async def refresh(body: RefreshRequest):
     return TokenResponse(
         access_token=create_access_token(user["id"], user["username"]),
         refresh_token=create_refresh_token(user["id"]),
-        user=UserPublic(
-            id=user["id"],
-            username=user["username"],
-            email=user["email"],
-            is_premium=user["is_premium"],
-            created_at=user["created_at"],
-        ),
+        user=_to_user_public(user),
     )
 
 
 @router.get("/me", response_model=UserPublic)
 async def me(current_user=Depends(get_current_user)):
-    return UserPublic(
-        id=current_user["id"],
-        username=current_user["username"],
-        email=current_user["email"],
-        is_premium=current_user["is_premium"],
-        created_at=current_user["created_at"],
+    return _to_user_public(current_user)
+
+
+@router.patch("/me", response_model=UserPublic)
+async def update_me(body: UpdateProfileRequest, current_user=Depends(get_current_user)):
+    """Actualiza el perfil del usuario autenticado.
+    Requiere current_password si se cambia email o contraseña."""
+    user_id = current_user["id"]
+    updates: dict = {}
+
+    # Verificar si se necesita contraseña actual
+    changing_email = (
+        body.email is not None and
+        body.email.lower().strip() != current_user["email"]
     )
+    changing_password = body.new_password is not None
+
+    if changing_email or changing_password:
+        if not body.current_password:
+            raise HTTPException(
+                400, "Se requiere la contraseña actual para cambiar email o contraseña"
+            )
+        if not verify_password(body.current_password, current_user["password_hash"]):
+            raise HTTPException(401, "Contraseña actual incorrecta")
+
+    # Username
+    if body.username is not None:
+        new_uname = body.username.strip()
+        if new_uname.lower() != current_user["username"].lower():
+            existing = await database.fetch_one(
+                users.select().where(
+                    func.lower(users.c.username) == new_uname.lower()
+                ).where(users.c.id != user_id)
+            )
+            if existing:
+                raise HTTPException(400, "El nombre de usuario ya está en uso")
+        updates["username"] = new_uname
+
+    # Email
+    if changing_email:
+        new_email = body.email.lower().strip()
+        existing = await database.fetch_one(
+            users.select().where(users.c.email == new_email).where(users.c.id != user_id)
+        )
+        if existing:
+            raise HTTPException(400, "El email ya está registrado")
+        updates["email"] = new_email
+
+    # Bio
+    if body.bio is not None:
+        updates["bio"] = body.bio.strip()
+
+    # Avatar
+    if body.avatar is not None:
+        updates["avatar"] = body.avatar
+
+    # Password
+    if changing_password:
+        updates["password_hash"] = hash_password(body.new_password)
+
+    if not updates:
+        # Nada que cambiar — devuelve el usuario actual sin error
+        return _to_user_public(current_user)
+
+    await database.execute(
+        users.update().where(users.c.id == user_id).values(**updates)
+    )
+
+    updated = await database.fetch_one(users.select().where(users.c.id == user_id))
+    if not updated:
+        raise HTTPException(500, "Error al actualizar el perfil")
+
+    logger.info(f"Profile updated — user_id={user_id}, fields={list(updates.keys())}")
+    return _to_user_public(updated)
 
 
 @router.post("/forgot-password", status_code=200)

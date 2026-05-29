@@ -48,6 +48,8 @@ users = sqlalchemy.Table(
     sqlalchemy.Column("is_admin",      sqlalchemy.Boolean, nullable=False, default=False, server_default="false"),
     sqlalchemy.Column("is_premium",    sqlalchemy.Boolean, nullable=False, default=False, server_default="false"),
     sqlalchemy.Column("premium_since", sqlalchemy.DateTime, nullable=True),   # para futura expiración
+    sqlalchemy.Column("bio",           sqlalchemy.String(150), nullable=True, server_default=""),
+    sqlalchemy.Column("avatar",        sqlalchemy.String(20),  nullable=True, server_default=""),
     sqlalchemy.Column("created_at",    sqlalchemy.DateTime, server_default=sqlalchemy.func.now()),
 )
 
