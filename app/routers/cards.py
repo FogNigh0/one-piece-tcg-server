@@ -12,6 +12,13 @@ async def search_cards(
     set_code: str = "",
     card_type: str = "",
     color: str = "",
+    # ── Filtros avanzados (Premium en el cliente) ─────────────────────────────
+    rarity: str = "",           # C | UC | R | SR | SEC | L | P
+    cost_min: int | None = None,
+    cost_max: int | None = None,
+    power_min: int | None = None,
+    power_max: int | None = None,
+    # ─────────────────────────────────────────────────────────────────────────
     limit: int = 50,
     offset: int = 0,
 ):
@@ -21,6 +28,9 @@ async def search_cards(
       GET /cards/?q=Luffy
       GET /cards/?set_code=OP14
       GET /cards/?color=Red&card_type=CHARACTER
+      GET /cards/?rarity=SR
+      GET /cards/?cost_min=3&cost_max=6
+      GET /cards/?power_min=8000
     """
     query = cards.select()
 
@@ -38,6 +48,16 @@ async def search_cards(
         query = query.where(sqlalchemy.func.upper(cards.c.card_type) == card_type.upper())
     if color:
         query = query.where(cards.c.color.ilike(f"%{color}%"))
+    if rarity:
+        query = query.where(sqlalchemy.func.upper(cards.c.rarity) == rarity.upper())
+    if cost_min is not None:
+        query = query.where(cards.c.cost >= cost_min)
+    if cost_max is not None:
+        query = query.where(cards.c.cost <= cost_max)
+    if power_min is not None:
+        query = query.where(cards.c.power >= power_min)
+    if power_max is not None:
+        query = query.where(cards.c.power <= power_max)
 
     query = query.limit(limit).offset(offset)
     results = await database.fetch_all(query)
