@@ -33,6 +33,14 @@ class RegisterRequest(BaseModel):
     username: str
     email: EmailStr
     password: str
+    terms_accepted: bool = False   # debe ser True para crear cuenta
+
+    @field_validator("terms_accepted")
+    @classmethod
+    def must_accept_terms(cls, v):
+        if not v:
+            raise ValueError("Debes aceptar los Términos y Condiciones para registrarte")
+        return v
 
     @field_validator("username")
     @classmethod
@@ -159,6 +167,10 @@ class UpdateProfileRequest(BaseModel):
         return v
 
 
+class DeleteAccountRequest(BaseModel):
+    password: str
+
+
 # ── get_current_user ──────────────────────────────────────────────────────────
 
 async def get_current_user(
@@ -253,6 +265,7 @@ async def register(body: RegisterRequest):
 
         # 3. Insertar usuario — is_premium se especifica explícitamente para evitar
         #    problemas si la columna fue agregada por migración sin DEFAULT en el DB real
+        now_naive = datetime.now(timezone.utc).replace(tzinfo=None)
         user_id = await database.execute(
             users.insert().values(
                 username=body.username.strip(),
@@ -261,6 +274,8 @@ async def register(body: RegisterRequest):
                 is_active=True,
                 is_admin=False,
                 is_premium=False,
+                terms_accepted_at=now_naive if body.terms_accepted else None,
+                terms_version="v1.0"        if body.terms_accepted else "",
             )
         )
         logger.info(f"New user registered — id={user_id}, username={body.username.strip()}")
@@ -411,6 +426,23 @@ async def update_me(body: UpdateProfileRequest, current_user=Depends(get_current
 
     logger.info(f"Profile updated — user_id={user_id}, fields={list(updates.keys())}")
     return _to_user_public(updated)
+
+
+@router.delete("/me", status_code=204)
+async def delete_account(
+    body: DeleteAccountRequest,
+    current_user=Depends(get_current_user),
+):
+    """Elimina permanentemente la cuenta y todos los datos asociados del usuario."""
+    if not verify_password(body.password, current_user["password_hash"]):
+        raise HTTPException(400, "Contraseña incorrecta")
+
+    user_id = current_user["id"]
+    # El CASCADE en user_folders, user_folder_cards, user_collection elimina
+    # los datos asociados automáticamente.
+    await database.execute(users.delete().where(users.c.id == user_id))
+    logger.info(f"Account deleted — user_id={user_id}, username={current_user['username']}")
+    # 204 No Content — sin cuerpo de respuesta
 
 
 @router.post("/forgot-password", status_code=200)

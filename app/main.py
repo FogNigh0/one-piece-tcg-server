@@ -4,7 +4,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from .database import database, engine
 from .models import metadata
 from .routers import cards, decks
-from .routers import auth, folders, collection, feedback, admin, admin_panel
+from .routers import auth, folders, collection, feedback, admin, admin_panel, legal
 
 logger = logging.getLogger("uvicorn.error")
 
@@ -25,6 +25,7 @@ app.include_router(collection.router)
 app.include_router(feedback.router)
 app.include_router(admin.router)
 app.include_router(admin_panel.router)
+app.include_router(legal.router)
 
 
 async def _run_migrations():
@@ -39,6 +40,9 @@ async def _run_migrations():
         # Perfil de usuario — bio y avatar
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS bio    VARCHAR(150) DEFAULT ''",
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar VARCHAR(20)  DEFAULT ''",
+        # Legal — aceptación de términos
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS terms_accepted_at TIMESTAMP WITHOUT TIME ZONE DEFAULT NULL",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS terms_version      VARCHAR(10)               DEFAULT ''",
     ]
     for sql in migrations:
         try:
