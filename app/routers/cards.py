@@ -1,7 +1,10 @@
+import logging
 from fastapi import APIRouter, HTTPException
 from ..database import database
 from ..models import cards
 import sqlalchemy
+
+logger = logging.getLogger("uvicorn.error")
 
 router = APIRouter(prefix="/cards", tags=["cards"])
 
@@ -90,6 +93,8 @@ async def get_card(card_id: str):
     Ejemplo: GET /cards/OP14-079
              GET /cards/OP14-091_p1
     """
+    original_id = card_id
+
     # Normaliza el código base a mayúsculas pero preserva el sufijo de variante
     # Ej: "op14-091_p1" → "OP14-091_p1"  (NO "OP14-091_P1")
     if "_p" in card_id.lower():
@@ -98,10 +103,23 @@ async def get_card(card_id: str):
     else:
         card_id = card_id.upper().strip()
 
+    # 1. Intento exacto (case-sensitive)
+    logger.debug(f"[Cards.get_card] Lookup (exact): {original_id} → normalized: {card_id}")
     query = cards.select().where(cards.c.id == card_id)
     card = await database.fetch_one(query)
 
+    # 2. Si no encontró, intento case-insensitive (fallback para líderes o cartas con mixed-case en BD)
     if card is None:
+        logger.warning(f"[Cards.get_card] Lookup FAILED (exact case): {card_id}")
+        logger.info(f"[Cards.get_card] Trying case-insensitive fallback for: {original_id}")
+        query = cards.select().where(sqlalchemy.func.upper(cards.c.id) == card_id.upper())
+        card = await database.fetch_one(query)
+        if card is not None:
+            logger.info(f"[Cards.get_card] ✓ FOUND via case-insensitive: {original_id} → actual ID in DB: {card['id']} [type={card['card_type']}]")
+
+    if card is None:
+        logger.error(f"[Cards.get_card] NOT FOUND: {original_id} (normalized: {card_id})")
         raise HTTPException(status_code=404, detail=f"Carta {card_id} no encontrada")
 
+    logger.debug(f"[Cards.get_card] ✓ Lookup success: {original_id} [type={card['card_type']}]")
     return dict(card)
