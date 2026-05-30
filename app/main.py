@@ -8,7 +8,7 @@ from .core.rate_limiter import limiter
 from .database import database, engine
 from .models import metadata
 from .routers import cards, decks
-from .routers import auth, folders, collection, feedback, admin, admin_panel, legal
+from .routers import auth, folders, collection, feedback, admin, admin_panel, legal, bulk_scan
 
 logger = logging.getLogger("uvicorn.error")
 
@@ -50,6 +50,7 @@ app.include_router(feedback.router)
 app.include_router(admin.router)
 app.include_router(admin_panel.router)
 app.include_router(legal.router)
+app.include_router(bulk_scan.router)
 
 
 async def _run_migrations():
