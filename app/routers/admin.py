@@ -1,12 +1,14 @@
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, HTTPException, Depends, Request
 from pydantic import BaseModel
 from typing import List, Optional
 from datetime import datetime, timezone
 from sqlalchemy import func, select
 
 from ..database import database
-from ..models import users, user_collection, feedback as feedback_table
+from ..models import users, user_collection, feedback as feedback_table, audit_logs
 from .auth import get_current_user
+from ..core.audit import log_audit, AuditAction
+from ..core.rate_limiter import get_client_ip
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 
@@ -120,6 +122,7 @@ async def list_users(
 
 @router.patch("/users/{user_id}")
 async def toggle_user(
+    request: Request,
     user_id: int,
     body: ToggleUserRequest,
     current_admin=Depends(require_admin),
@@ -133,13 +136,24 @@ async def toggle_user(
         await database.execute(
             users.update().where(users.c.id == user_id).values(is_active=body.is_active)
         )
+        action = AuditAction.ADMIN_UNBAN_USER if body.is_active else AuditAction.ADMIN_BAN_USER
+        await log_audit(
+            action,
+            actor_user_id=current_admin["id"],
+            target_user_id=user_id,
+            ip_address=get_client_ip(request),
+            details={"username": user["username"], "is_active": body.is_active},
+        )
         return {"id": user_id, "is_active": body.is_active}
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(500, f"Error al actualizar estado del usuario: {str(e)}")
 
 
 @router.patch("/users/{user_id}/plan")
 async def set_user_plan(
+    request: Request,
     user_id: int,
     body: SetPlanRequest,
     current_admin=Depends(require_admin),
@@ -158,7 +172,6 @@ async def set_user_plan(
         )
 
         # Paso 2 — actualizar premium_since (timezone-naive para TIMESTAMP sin TZ)
-        # Se ejecuta en un bloque separado para que un fallo aquí no aborte el paso 1
         if body.is_premium:
             try:
                 now_naive = datetime.now(timezone.utc).replace(tzinfo=None)
@@ -168,11 +181,21 @@ async def set_user_plan(
                     .values(premium_since=now_naive)
                 )
             except Exception:
-                # La columna puede no existir en DBs antiguas — no es crítico
-                pass
+                pass  # columna puede no existir en DBs antiguas
+
+        action = AuditAction.ADMIN_SET_PREMIUM if body.is_premium else AuditAction.ADMIN_REVOKE_PREMIUM
+        await log_audit(
+            action,
+            actor_user_id=current_admin["id"],
+            target_user_id=user_id,
+            ip_address=get_client_ip(request),
+            details={"username": user["username"], "is_premium": body.is_premium},
+        )
 
         return {"id": user_id, "is_premium": body.is_premium}
 
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(500, f"Error al actualizar el plan: {str(e)}")
 
@@ -251,3 +274,57 @@ async def delete_feedback(feedback_id: int, _=Depends(require_admin)):
         feedback_table.delete().where(feedback_table.c.id == feedback_id)
     )
     return {"id": feedback_id, "deleted": True}
+
+
+# ── Audit log ─────────────────────────────────────────────────────────────────
+
+class AuditLogView(BaseModel):
+    id: int
+    timestamp: datetime
+    action: str
+    actor_user_id: Optional[int]
+    target_user_id: Optional[int]
+    ip_address: Optional[str]
+    details: Optional[str]
+    success: bool
+
+
+@router.get("/audit-logs", response_model=List[AuditLogView])
+async def get_audit_logs(
+    page: int = 1,
+    limit: int = 50,
+    action: Optional[str] = None,
+    user_id: Optional[int] = None,
+    _=Depends(require_admin),
+):
+    """Consulta el registro de auditoría. Filtrable por acción y usuario."""
+    limit = min(limit, 200)  # máximo 200 por página
+    offset = (page - 1) * limit
+
+    query = audit_logs.select().order_by(audit_logs.c.timestamp.desc()).limit(limit).offset(offset)
+
+    if action:
+        query = query.where(audit_logs.c.action == action.upper())
+    if user_id:
+        from sqlalchemy import or_
+        query = query.where(
+            or_(
+                audit_logs.c.actor_user_id == user_id,
+                audit_logs.c.target_user_id == user_id,
+            )
+        )
+
+    rows = await database.fetch_all(query)
+    return [
+        AuditLogView(
+            id=r["id"],
+            timestamp=r["timestamp"],
+            action=r["action"],
+            actor_user_id=r["actor_user_id"],
+            target_user_id=r["target_user_id"],
+            ip_address=r["ip_address"],
+            details=r["details"],
+            success=bool(r["success"]),
+        )
+        for r in rows
+    ]

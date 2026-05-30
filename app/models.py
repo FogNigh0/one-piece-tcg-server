@@ -52,6 +52,7 @@ users = sqlalchemy.Table(
     sqlalchemy.Column("avatar",             sqlalchemy.String(20),  nullable=True, server_default=""),
     sqlalchemy.Column("terms_accepted_at",  sqlalchemy.DateTime,    nullable=True),
     sqlalchemy.Column("terms_version",      sqlalchemy.String(10),  nullable=True, server_default=""),
+    sqlalchemy.Column("deleted_at",         sqlalchemy.DateTime,    nullable=True),   # soft delete
     sqlalchemy.Column("created_at",         sqlalchemy.DateTime, server_default=sqlalchemy.func.now()),
 )
 
@@ -86,6 +87,21 @@ user_collection = sqlalchemy.Table(
     sqlalchemy.Column("card_set_code", sqlalchemy.String(50), nullable=False),
     sqlalchemy.Column("quantity",      sqlalchemy.Integer, default=1, nullable=False),
     sqlalchemy.Column("updated_at",    sqlalchemy.DateTime, server_default=sqlalchemy.func.now(), onupdate=sqlalchemy.func.now()),
+)
+
+# ── Registro de auditoría ────────────────────────────────────────────────────
+# Rastrea acciones críticas: logins, registros, eliminaciones, cambios admin.
+audit_logs = sqlalchemy.Table(
+    "audit_logs",
+    metadata,
+    sqlalchemy.Column("id",             sqlalchemy.Integer, primary_key=True, autoincrement=True),
+    sqlalchemy.Column("timestamp",      sqlalchemy.DateTime, server_default=sqlalchemy.func.now(), index=True),
+    sqlalchemy.Column("action",         sqlalchemy.String(50), nullable=False, index=True),
+    sqlalchemy.Column("actor_user_id",  sqlalchemy.Integer, nullable=True, index=True),   # quién lo hizo
+    sqlalchemy.Column("target_user_id", sqlalchemy.Integer, nullable=True, index=True),   # a quién afectó
+    sqlalchemy.Column("ip_address",     sqlalchemy.String(45), nullable=True),            # IPv6 max=45
+    sqlalchemy.Column("details",        sqlalchemy.Text, nullable=True),                  # JSON adicional
+    sqlalchemy.Column("success",        sqlalchemy.Boolean, nullable=False, server_default="true"),
 )
 
 # ── Feedback / Reportes de usuarios ──────────────────────────────────────────

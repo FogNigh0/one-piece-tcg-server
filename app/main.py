@@ -1,6 +1,10 @@
 import logging
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+from slowapi.errors import RateLimitExceeded
+from .config import settings
+from .core.rate_limiter import limiter
 from .database import database, engine
 from .models import metadata
 from .routers import cards, decks
@@ -8,13 +12,33 @@ from .routers import auth, folders, collection, feedback, admin, admin_panel, le
 
 logger = logging.getLogger("uvicorn.error")
 
-app = FastAPI(title="One Piece TCG API", version="2.1.0")
+app = FastAPI(title="One Piece TCG API", version="2.2.0")
+
+# ── Rate limiter ──────────────────────────────────────────────────────────────
+
+app.state.limiter = limiter
+
+@app.exception_handler(RateLimitExceeded)
+async def rate_limit_handler(request: Request, exc: RateLimitExceeded):
+    return JSONResponse(
+        status_code=429,
+        content={
+            "detail": "Demasiadas solicitudes. Espera un momento e intenta de nuevo.",
+            "retry_after": str(exc.retry_after) if hasattr(exc, "retry_after") else "60",
+        },
+        headers={"Retry-After": "60"},
+    )
+
+# ── CORS ──────────────────────────────────────────────────────────────────────
+# Orígenes desde variable de entorno CORS_ORIGINS (lista separada por comas).
+# En producción, define CORS_ORIGINS con los dominios reales.
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=settings.cors_origins_list,
+    allow_credentials=True,
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type", "Accept"],
 )
 
 app.include_router(cards.router)
@@ -43,6 +67,8 @@ async def _run_migrations():
         # Legal — aceptación de términos
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS terms_accepted_at TIMESTAMP WITHOUT TIME ZONE DEFAULT NULL",
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS terms_version      VARCHAR(10)               DEFAULT ''",
+        # Seguridad — soft delete
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMP WITHOUT TIME ZONE DEFAULT NULL",
     ]
     for sql in migrations:
         try:
@@ -59,9 +85,10 @@ async def _run_migrations():
 
 @app.on_event("startup")
 async def startup():
-    metadata.create_all(engine)   # Crea tablas nuevas (feedback, etc.)
+    settings.validate_security()   # Valida configuración crítica
+    metadata.create_all(engine)    # Crea tablas nuevas (audit_logs, etc.)
     await database.connect()
-    await _run_migrations()        # Agrega columnas nuevas a tablas existentes
+    await _run_migrations()         # Agrega columnas nuevas a tablas existentes
 
 
 @app.on_event("shutdown")

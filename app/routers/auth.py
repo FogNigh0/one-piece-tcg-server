@@ -6,9 +6,24 @@ from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from datetime import datetime, timedelta, timezone
 
-from fastapi import APIRouter, HTTPException, Depends
+import re as _re
+from fastapi import APIRouter, HTTPException, Depends, Request
 from fastapi.responses import HTMLResponse
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from ..core.rate_limiter import (
+    limiter, get_client_ip,
+    is_login_locked, record_failed_login, clear_failed_login, lockout_remaining_str,
+)
+from ..core.audit import log_audit, AuditAction
+
+
+def _sanitize(value: str | None) -> str:
+    """Elimina etiquetas HTML y normaliza espacios en blanco."""
+    if not value:
+        return value or ""
+    value = _re.sub(r'<[^>]+>', '', value)          # elimina HTML tags
+    value = _re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f]', '', value)  # elimina control chars
+    return ' '.join(value.split())                   # normaliza espacios
 from typing import Optional
 from pydantic import BaseModel, EmailStr, field_validator
 from sqlalchemy import func
@@ -53,6 +68,11 @@ class RegisterRequest(BaseModel):
         if not re.match(r'^[a-zA-Z0-9_]+$', v):
             raise ValueError("Solo letras, números y guión bajo (_)")
         return v
+
+    @field_validator("email")
+    @classmethod
+    def email_normalize(cls, v):
+        return v.lower().strip() if v else v
 
     @field_validator("password")
     @classmethod
@@ -245,13 +265,17 @@ def _to_user_public(row) -> UserPublic:
 # ── Endpoints ─────────────────────────────────────────────────────────────────
 
 @router.post("/register", response_model=TokenResponse, status_code=201)
-async def register(body: RegisterRequest):
+@limiter.limit("3/minute")
+async def register(request: Request, body: RegisterRequest):
+    ip = get_client_ip(request)
     try:
         # 1. Unicidad de email
         existing_email = await database.fetch_one(
             users.select().where(users.c.email == body.email.lower().strip())
         )
         if existing_email:
+            await log_audit(AuditAction.USER_REGISTER, ip_address=ip, success=False,
+                            details={"reason": "email_taken", "email": body.email})
             raise HTTPException(400, "El email ya está registrado")
 
         # 2. Unicidad de username (case-insensitive)
@@ -261,6 +285,8 @@ async def register(body: RegisterRequest):
             )
         )
         if existing_user:
+            await log_audit(AuditAction.USER_REGISTER, ip_address=ip, success=False,
+                            details={"reason": "username_taken", "username": body.username.strip()})
             raise HTTPException(400, "El nombre de usuario ya está en uso")
 
         # 3. Insertar usuario — is_premium se especifica explícitamente para evitar
@@ -279,6 +305,9 @@ async def register(body: RegisterRequest):
             )
         )
         logger.info(f"New user registered — id={user_id}, username={body.username.strip()}")
+        await log_audit(AuditAction.USER_REGISTER, actor_user_id=user_id,
+                        ip_address=ip, success=True,
+                        details={"username": body.username.strip()})
 
         # 4. Recuperar el usuario recién creado
         new_user = await database.fetch_one(
@@ -308,8 +337,21 @@ async def register(body: RegisterRequest):
 
 
 @router.post("/login", response_model=TokenResponse)
-async def login(body: LoginRequest):
+@limiter.limit("5/minute")
+async def login(request: Request, body: LoginRequest):
+    ip  = get_client_ip(request)
     val = body.email_or_username.strip()
+
+    # ── Comprueba bloqueo por intentos fallidos ───────────────────────────────
+    remaining = is_login_locked(ip, val)
+    if remaining is not None:
+        await log_audit(AuditAction.USER_LOGIN_LOCKED, ip_address=ip, success=False,
+                        details={"identifier": val, "remaining_sec": int(remaining)})
+        raise HTTPException(
+            429,
+            f"Cuenta bloqueada temporalmente por múltiples intentos fallidos. "
+            f"Espera {lockout_remaining_str(remaining)} antes de intentarlo de nuevo."
+        )
 
     user = await database.fetch_one(
         users.select().where(users.c.email == val.lower())
@@ -320,10 +362,24 @@ async def login(body: LoginRequest):
                 func.lower(users.c.username) == val.lower()
             )
         )
+
+    # Credenciales incorrectas o cuenta eliminada/desactivada
     if not user or not verify_password(body.password, user["password_hash"]):
+        count = record_failed_login(ip, val)
+        await log_audit(AuditAction.USER_LOGIN_FAIL, ip_address=ip, success=False,
+                        details={"identifier": val, "attempt": count})
         raise HTTPException(401, "Credenciales incorrectas")
+
     if not user["is_active"]:
+        await log_audit(AuditAction.USER_LOGIN_FAIL,
+                        actor_user_id=user["id"], ip_address=ip, success=False,
+                        details={"reason": "account_inactive"})
         raise HTTPException(403, "Cuenta desactivada")
+
+    # Login exitoso — limpia intentos fallidos y registra auditoría
+    clear_failed_login(ip, val)
+    await log_audit(AuditAction.USER_LOGIN_SUCCESS, actor_user_id=user["id"],
+                    ip_address=ip, success=True)
 
     return TokenResponse(
         access_token=create_access_token(user["id"], user["username"]),
@@ -425,24 +481,52 @@ async def update_me(body: UpdateProfileRequest, current_user=Depends(get_current
         raise HTTPException(500, "Error al actualizar el perfil")
 
     logger.info(f"Profile updated — user_id={user_id}, fields={list(updates.keys())}")
+
+    # Auditoría granular según qué cambió
+    if changing_password:
+        await log_audit(AuditAction.USER_PASSWORD_CHANGE, actor_user_id=user_id, success=True)
+    if changing_email:
+        await log_audit(AuditAction.USER_EMAIL_CHANGE, actor_user_id=user_id, success=True,
+                        details={"new_email": updates.get("email")})
+    if set(updates.keys()) - {"password_hash", "email"}:
+        await log_audit(AuditAction.USER_PROFILE_UPDATE, actor_user_id=user_id, success=True,
+                        details={"fields": [k for k in updates if k not in ("password_hash", "email")]})
+
     return _to_user_public(updated)
 
 
 @router.delete("/me", status_code=204)
 async def delete_account(
+    request: Request,
     body: DeleteAccountRequest,
     current_user=Depends(get_current_user),
 ):
-    """Elimina permanentemente la cuenta y todos los datos asociados del usuario."""
+    """Soft-delete: desactiva la cuenta. Los datos se retienen 30 días para posible recuperación."""
+    ip      = get_client_ip(request)
+    user_id = current_user["id"]
+
     if not verify_password(body.password, current_user["password_hash"]):
+        await log_audit(AuditAction.USER_DELETE, actor_user_id=user_id,
+                        ip_address=ip, success=False,
+                        details={"reason": "wrong_password"})
         raise HTTPException(400, "Contraseña incorrecta")
 
-    user_id = current_user["id"]
-    # El CASCADE en user_folders, user_folder_cards, user_collection elimina
-    # los datos asociados automáticamente.
-    await database.execute(users.delete().where(users.c.id == user_id))
-    logger.info(f"Account deleted — user_id={user_id}, username={current_user['username']}")
-    # 204 No Content — sin cuerpo de respuesta
+    now_naive = datetime.now(timezone.utc).replace(tzinfo=None)
+    await database.execute(
+        users.update()
+        .where(users.c.id == user_id)
+        .values(
+            is_active=False,
+            deleted_at=now_naive,
+        )
+    )
+    await log_audit(AuditAction.USER_DELETE, actor_user_id=user_id,
+                    ip_address=ip, success=True,
+                    details={"username": current_user["username"]})
+    logger.info(
+        f"Account soft-deleted — user_id={user_id}, username={current_user['username']}"
+    )
+    # 204 No Content
 
 
 @router.post("/forgot-password", status_code=200)

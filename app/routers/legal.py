@@ -1,4 +1,4 @@
-# app/routers/legal.py
+﻿# app/routers/legal.py
 # Endpoints legales públicos — versiones de políticas y DMCA.
 # El contenido real de cada documento vive en el cliente (Flutter).
 
@@ -35,9 +35,9 @@ async def get_legal_versions():
             "version": PREMIUM_VERSION,
             "updated": PREMIUM_UPDATED,
         },
-        "app_name": "NakamaCards",
+        "app_name": "Nakama Cards",
         "disclaimer": (
-            "NakamaCards es una aplicación no oficial creada por fans y no está "
+            "Nakama Cards es una aplicación no oficial creada por fans y no está "
             "afiliada ni respaldada por Bandai, Toei Animation ni los propietarios "
             "de One Piece Card Game. Todas las marcas e imágenes pertenecen a sus "
             "respectivos propietarios."

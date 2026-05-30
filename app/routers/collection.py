@@ -1,11 +1,16 @@
-from fastapi import APIRouter, Depends
-from pydantic import BaseModel
+import re
+from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel, field_validator
 from typing import List
 from datetime import datetime
 
 from ..database import database
 from ..models import user_collection
 from .auth import get_current_user
+
+# card_set_code: letras, números, guion, guion bajo. 3-30 caracteres.
+_CARD_CODE_RE = re.compile(r'^[A-Za-z0-9][A-Za-z0-9_\-]{2,29}$')
+_SYNC_MAX_CARDS = 2000   # límite de entradas por sincronización
 
 router = APIRouter(prefix="/collection", tags=["collection"])
 
@@ -16,8 +21,33 @@ class CollectionCardItem(BaseModel):
     card_set_code: str
     quantity: int
 
+    @field_validator("card_set_code")
+    @classmethod
+    def validate_code(cls, v: str) -> str:
+        v = v.strip().upper()
+        if not _CARD_CODE_RE.match(v):
+            raise ValueError(f"Código de carta inválido: '{v}'")
+        return v
+
+    @field_validator("quantity")
+    @classmethod
+    def validate_quantity(cls, v: int) -> int:
+        if v < 0:
+            raise ValueError("La cantidad no puede ser negativa")
+        if v > 999:
+            raise ValueError("Cantidad máxima por carta: 999")
+        return v
+
+
 class CollectionSync(BaseModel):
     cards: List[CollectionCardItem]
+
+    @field_validator("cards")
+    @classmethod
+    def validate_batch_size(cls, v: list) -> list:
+        if len(v) > _SYNC_MAX_CARDS:
+            raise ValueError(f"Máximo {_SYNC_MAX_CARDS} cartas por sincronización")
+        return v
 
 class CollectionResponse(BaseModel):
     card_set_code: str
