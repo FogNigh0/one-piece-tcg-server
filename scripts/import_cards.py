@@ -25,8 +25,12 @@ DB_CONFIG = {
     "port":     int(os.getenv("DB_PORT", "33325")),
     "dbname":   os.getenv("DB_NAME", "railway"),
     "user":     os.getenv("DB_USER", "postgres"),
-    "password": os.getenv("DB_PASS", "apthEUgfIwXgLEazqMNGwNxMtDeTDEyf"),
+    # SIN credencial por defecto: define DB_PASS como variable de entorno.
+    "password": os.getenv("DB_PASS", ""),
 }
+
+if not DB_CONFIG["password"]:
+    raise SystemExit("Falta DB_PASS. Define la variable de entorno antes de ejecutar.")
 
 API_BASE = "https://optcgapi.com/api"
 
