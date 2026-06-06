@@ -42,6 +42,13 @@ class Settings(BaseSettings):
     # ── Entorno ───────────────────────────────────────────────────────────────
     ENVIRONMENT: str = os.getenv("ENVIRONMENT", "development")
 
+    # ── Feature flags ─────────────────────────────────────────────────────────
+    # Modelo freemium. Por defecto True (comportamiento actual: límites Free y
+    # escaneo masivo solo Premium). En el despliegue de la versión gratuita
+    # (Play Store) se setea FREEMIUM_ENABLED=false para liberar funciones
+    # Premium-only (p.ej. escaneo masivo) a todos los usuarios.
+    FREEMIUM_ENABLED: bool = os.getenv("FREEMIUM_ENABLED", "true").lower() == "true"
+
     class Config:
         env_file = ".env"
 

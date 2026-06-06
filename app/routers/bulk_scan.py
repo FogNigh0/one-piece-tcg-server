@@ -17,6 +17,7 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel, field_validator
 
+from ..config import settings
 from ..database import database
 from ..models import users, user_collection, user_folders, user_folder_cards
 from .auth import get_current_user
@@ -26,9 +27,13 @@ logger = logging.getLogger("uvicorn.error")
 router = APIRouter(prefix="/bulk-scan", tags=["bulk-scan"])
 
 
-# ── Guard: solo Premium ───────────────────────────────────────────────────────
+# ── Guard: escaneo masivo ─────────────────────────────────────────────────────
 
 async def require_premium(current_user=Depends(get_current_user)):
+    # Si el modelo freemium está desactivado (versión gratuita), el escaneo
+    # masivo es libre para todos los usuarios.
+    if not settings.FREEMIUM_ENABLED:
+        return current_user
     if not current_user["is_premium"] and not current_user["is_admin"]:
         raise HTTPException(403, "Escaneo Masivo es una función exclusiva de Premium.")
     return current_user
