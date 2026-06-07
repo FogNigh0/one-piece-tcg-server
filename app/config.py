@@ -42,6 +42,12 @@ class Settings(BaseSettings):
     # ── Entorno ───────────────────────────────────────────────────────────────
     ENVIRONMENT: str = os.getenv("ENVIRONMENT", "development")
 
+    # ── Eliminación de cuenta ─────────────────────────────────────────────────
+    # Período de gracia (días) entre la solicitud de eliminación y la purga
+    # definitiva de los datos. Durante este período el usuario puede recuperar
+    # la cuenta iniciando sesión.
+    ACCOUNT_DELETION_GRACE_DAYS: int = int(os.getenv("ACCOUNT_DELETION_GRACE_DAYS", "30"))
+
     # ── Feature flags ─────────────────────────────────────────────────────────
     # Modelo freemium. Por defecto True (comportamiento actual: límites Free y
     # escaneo masivo solo Premium). En el despliegue de la versión gratuita

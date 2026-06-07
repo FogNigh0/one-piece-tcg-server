@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -5,6 +6,7 @@ from fastapi.responses import JSONResponse
 from slowapi.errors import RateLimitExceeded
 from .config import settings
 from .core.rate_limiter import limiter
+from .core.account_purge import purge_loop
 from .database import database, engine
 from .models import metadata
 from .routers import cards, decks
@@ -90,6 +92,8 @@ async def startup():
     metadata.create_all(engine)    # Crea tablas nuevas (audit_logs, etc.)
     await database.connect()
     await _run_migrations()         # Agrega columnas nuevas a tablas existentes
+    # Tarea de fondo: purga definitiva de cuentas con período de gracia vencido.
+    app.state.purge_task = asyncio.create_task(purge_loop())
 
 
 @app.on_event("shutdown")

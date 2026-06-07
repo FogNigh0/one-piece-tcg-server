@@ -371,10 +371,31 @@ async def login(request: Request, body: LoginRequest):
         raise HTTPException(401, "Credenciales incorrectas")
 
     if not user["is_active"]:
-        await log_audit(AuditAction.USER_LOGIN_FAIL,
-                        actor_user_id=user["id"], ip_address=ip, success=False,
-                        details={"reason": "account_inactive"})
-        raise HTTPException(403, "Cuenta desactivada")
+        # Cuenta en período de gracia de eliminación → recuperación al iniciar sesión
+        # (la contraseña ya fue verificada arriba).
+        if user["deleted_at"] is not None:
+            grace_end = user["deleted_at"] + timedelta(days=settings.ACCOUNT_DELETION_GRACE_DAYS)
+            if datetime.utcnow() < grace_end:
+                await database.execute(
+                    users.update().where(users.c.id == user["id"]).values(
+                        is_active=True, deleted_at=None
+                    )
+                )
+                await log_audit(AuditAction.USER_RESTORE, actor_user_id=user["id"],
+                                ip_address=ip, success=True)
+                logger.info(f"Account restored from pending deletion — user_id={user['id']}")
+                user = await database.fetch_one(
+                    users.select().where(users.c.id == user["id"])
+                )
+            else:
+                # Gracia vencida (pendiente de purga inminente).
+                raise HTTPException(403, "Cuenta eliminada")
+        else:
+            # Desactivada por un administrador (baneo) → no recuperable por login.
+            await log_audit(AuditAction.USER_LOGIN_FAIL,
+                            actor_user_id=user["id"], ip_address=ip, success=False,
+                            details={"reason": "account_inactive"})
+            raise HTTPException(403, "Cuenta desactivada")
 
     # Login exitoso — limpia intentos fallidos y registra auditoría
     clear_failed_login(ip, val)
@@ -495,13 +516,19 @@ async def update_me(body: UpdateProfileRequest, current_user=Depends(get_current
     return _to_user_public(updated)
 
 
-@router.delete("/me", status_code=204)
+@router.delete("/me")
 async def delete_account(
     request: Request,
     body: DeleteAccountRequest,
     current_user=Depends(get_current_user),
 ):
-    """Soft-delete: desactiva la cuenta. Los datos se retienen 30 días para posible recuperación."""
+    """Solicita la eliminación de la cuenta (soft-delete con período de gracia).
+
+    La cuenta queda inmediatamente inaccesible (cierra sesión en todos los
+    dispositivos, porque get_current_user/login/refresh rechazan is_active=False).
+    Los datos se eliminan definitivamente tras `ACCOUNT_DELETION_GRACE_DAYS` días.
+    Durante la gracia, el usuario puede recuperar la cuenta iniciando sesión.
+    """
     ip      = get_client_ip(request)
     user_id = current_user["id"]
 
@@ -520,12 +547,21 @@ async def delete_account(
             deleted_at=now_naive,
         )
     )
+    purge_date = now_naive + timedelta(days=settings.ACCOUNT_DELETION_GRACE_DAYS)
     await log_audit(AuditAction.USER_DELETE, actor_user_id=user_id,
                     ip_address=ip, success=True,
                     details={"username": current_user["username"]})
     logger.info(
-        f"Account soft-deleted — user_id={user_id}, username={current_user['username']}"
+        f"Account soft-deleted — user_id={user_id}, username={current_user['username']}, "
+        f"purge_date={purge_date.date()}"
     )
+    return {
+        "status": "pending_deletion",
+        "deleted_at": now_naive.isoformat(),
+        "purge_date": purge_date.isoformat(),
+        "grace_days": settings.ACCOUNT_DELETION_GRACE_DAYS,
+        "recoverable": True,
+    }
     # 204 No Content
 
 

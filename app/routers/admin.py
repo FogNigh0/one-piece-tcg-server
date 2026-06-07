@@ -10,6 +10,7 @@ from ..models import user_folders
 from .auth import get_current_user
 from ..core.audit import log_audit, AuditAction
 from ..core.rate_limiter import get_client_ip
+from ..core.account_purge import purge_expired_accounts
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 
@@ -20,6 +21,17 @@ async def require_admin(current_user=Depends(get_current_user)):
     if not current_user["is_admin"]:
         raise HTTPException(403, "Acceso denegado — solo administradores")
     return current_user
+
+
+# ── Purga manual de cuentas vencidas ──────────────────────────────────────────
+
+@router.post("/purge-expired")
+async def purge_expired(_=Depends(require_admin)):
+    """Ejecuta la purga definitiva de cuentas con período de gracia vencido.
+    Útil para disparo manual o vía cron externo. La purga también corre
+    automáticamente como tarea de fondo."""
+    purged = await purge_expired_accounts()
+    return {"purged": purged}
 
 
 # ── Schemas ───────────────────────────────────────────────────────────────────
