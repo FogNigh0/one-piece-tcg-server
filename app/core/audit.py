@@ -21,7 +21,9 @@ class AuditAction:
     USER_LOGIN_SUCCESS   = "USER_LOGIN_SUCCESS"
     USER_LOGIN_FAIL      = "USER_LOGIN_FAIL"
     USER_LOGIN_LOCKED    = "USER_LOGIN_LOCKED"
-    USER_DELETE          = "USER_DELETE"          # soft delete de cuenta
+    USER_DELETE          = "USER_DELETE"          # soft delete (solicitud de eliminación)
+    USER_RESTORE         = "USER_RESTORE"         # recuperación durante período de gracia
+    USER_PURGE           = "USER_PURGE"           # eliminación definitiva (purga tras gracia)
     USER_PROFILE_UPDATE  = "USER_PROFILE_UPDATE"
     USER_PASSWORD_CHANGE = "USER_PASSWORD_CHANGE"
     USER_EMAIL_CHANGE    = "USER_EMAIL_CHANGE"
